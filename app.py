@@ -17,7 +17,7 @@ st.set_page_config(
 # ── Styling ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght=400;700&family=DM+Sans:wght=300;400;600&display=swap');
 
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
@@ -127,15 +127,18 @@ EMOTION_COLORS_HEX = {
     "disgust":  "#28a028",
     "neutral":  "#b4b4b4",
 }
+
+# Fixed: Converted channel mappings from RGB to accurate BGR for OpenCV processing
 EMOTION_COLORS_BGR = {
-    "happy":    (0, 220, 120),
-    "sad":      (200, 80, 80),
-    "angry":    (0, 60, 220),
-    "surprise": (0, 200, 240),
-    "fear":     (140, 0, 200),
-    "disgust":  (40, 160, 40),
-    "neutral":  (180, 180, 180),
+    "happy":    (120, 220, 0),    
+    "sad":      (80, 80, 200),    
+    "angry":    (20, 60, 224),    
+    "surprise": (240, 200, 0),    
+    "fear":     (200, 0, 140),    
+    "disgust":  (40, 160, 40),    
+    "neutral":  (180, 180, 180),  
 }
+
 EMOJI_MAP = {
     "happy": "😄", "sad": "😢", "angry": "😠",
     "surprise": "😮", "fear": "😨", "disgust": "🤢", "neutral": "😐",
@@ -304,6 +307,11 @@ if source == "🖼️ Upload image":
 # ── Webcam mode ───────────────────────────────────────────────────────────────
 else:
     run = st.checkbox("▶ Start camera", value=False)
+    
+    # Initialize a session state cache to preserve screenshots outside the runtime loop
+    if "last_screenshot" not in st.session_state:
+        st.session_state.last_screenshot = None
+
     if not run:
         with col_vid:
             img_placeholder.markdown(
@@ -311,6 +319,14 @@ else:
                 "justify-content:center;border:1px dashed #333;border-radius:14px;"
                 "color:#444;font-family:Space Mono,monospace;font-size:0.85rem'>"
                 "Enable camera to begin</div>", unsafe_allow_html=True
+            )
+        # Fixed: Safely display screenshot download capability when live processing is idle
+        if st.session_state.last_screenshot is not None:
+            dl_placeholder.download_button(
+                "📸 Download last webcam screenshot", 
+                st.session_state.last_screenshot,
+                file_name="webcam_emotion.png", 
+                mime="image/png"
             )
     else:
         cap = cv2.VideoCapture(0)
@@ -320,55 +336,50 @@ else:
         frame_count = 0
         last_results = []
         t_prev = time.time()
-        screenshot_idx = 0
-        last_annotated = None
-
         stop_btn = st.button("⏹ Stop camera")
 
-        while cap.isOpened() and not stop_btn:
-            ret, frame = cap.read()
-            if not ret:
-                st.warning("Could not read from camera.")
-                break
+        try:
+            while cap.isOpened() and not stop_btn:
+                ret, frame = cap.read()
+                if not ret:
+                    st.warning("Could not read from camera.")
+                    break
 
-            frame_count += 1
-            t_now = time.time()
-            fps = 1 / max(t_now - t_prev, 1e-6)
-            t_prev = t_now
+                frame_count += 1
+                t_now = time.time()
+                fps = 1 / max(t_now - t_prev, 1e-6)
+                t_prev = t_now
 
-            if frame_count % frame_skip == 0:
-                last_results = analyze_frame(frame)
+                if frame_count % frame_skip == 0:
+                    last_results = analyze_frame(frame)
 
-            annotated = annotate_frame(frame, last_results)
-            last_annotated = annotated
-            pil_frame = frame_to_pil(annotated)
+                annotated = annotate_frame(frame, last_results)
+                pil_frame = frame_to_pil(annotated)
 
-            faces = len(last_results)
-            dom   = last_results[0].get("dominant_emotion","—").upper() if last_results else "—"
+                # Save frame image bytes back to state quietly without rendering button components in real-time loop
+                st.session_state.last_screenshot = pil_to_bytes(pil_frame)
 
-            with col_vid:
-                img_placeholder.image(pil_frame, use_container_width=True)
-                fps_box.markdown(
-                    f"<div class='metric-card'><div class='metric-label'>FPS</div>"
-                    f"<div class='metric-value'>{fps:.1f}</div></div>", unsafe_allow_html=True)
-                faces_box.markdown(
-                    f"<div class='metric-card'><div class='metric-label'>Faces</div>"
-                    f"<div class='metric-value'>{faces}</div></div>", unsafe_allow_html=True)
-                dominant_box.markdown(
-                    f"<div class='metric-card'><div class='metric-label'>Dominant</div>"
-                    f"<div class='metric-value' style='font-size:1.1rem'>{dom}</div></div>",
-                    unsafe_allow_html=True)
-                if last_annotated is not None:
-                    dl_placeholder.download_button(
-                        "📸 Save screenshot", pil_to_bytes(frame_to_pil(last_annotated)),
-                        file_name=f"emotion_{screenshot_idx:03d}.png", mime="image/png",
-                        key=f"dl_{frame_count}"
-                    )
-                    screenshot_idx += 1
+                faces = len(last_results)
+                dom = last_results[0].get("dominant_emotion","—").upper() if last_results else "—"
 
-            with col_info:
-                with panel_placeholder.container():
-                    render_emotion_panel(last_results)
+                with col_vid:
+                    img_placeholder.image(pil_frame, use_container_width=True)
+                    fps_box.markdown(
+                        f"<div class='metric-card'><div class='metric-label'>FPS</div>"
+                        f"<div class='metric-value'>{fps:.1f}</div></div>", unsafe_allow_html=True)
+                    faces_box.markdown(
+                        f"<div class='metric-card'><div class='metric-label'>Faces</div>"
+                        f"<div class='metric-value'>{faces}</div></div>", unsafe_allow_html=True)
+                    dominant_box.markdown(
+                        f"<div class='metric-card'><div class='metric-label'>Dominant</div>"
+                        f"<div class='metric-value' style='font-size:1.1rem'>{dom}</div></div>",
+                        unsafe_allow_html=True)
 
-        cap.release()
-        st.success("✅ Camera stopped.")
+                with col_info:
+                    with panel_placeholder.container():
+                        render_emotion_panel(last_results)
+                        
+        finally:
+            # Safely releases video hardware resource under all execution states
+            cap.release()
+            st.rerun()
