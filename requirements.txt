@@ -1,5 +1,5 @@
 streamlit
-deepface
+deepface>=0.0.93
 opencv-python
 numpy
 Pillow
